@@ -38,11 +38,16 @@ impl Mp4Box for FileTypeBox {
     const BOX_TYPE: [u8; 4] = *b"ftyp";
 
     fn box_payload_size(&self) -> Result<u32> {
-        Ok(8)
+        Ok(24)
     }
     fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
-        write_all!(writer, b"isom"); // major_brand
-        write_u32!(writer, 512); // minor_version
+        write_all!(writer, b"mp42"); // major_brand
+        write_u32!(writer, 1); // minor_version
+        write_all!(writer, b"mp41");
+        write_all!(writer, b"mp42");
+        write_all!(writer, b"isom");
+        write_all!(writer, b"hlsf");
+
         Ok(())
     }
 }
@@ -214,7 +219,7 @@ impl Mp4Box for MovieHeaderBox {
 #[derive(Debug)]
 pub struct TrackBox {
     pub tkhd_box: TrackHeaderBox,
-    pub edts_box: EditBox,
+    // pub edts_box: EditBox,
     pub mdia_box: MediaBox,
 }
 impl TrackBox {
@@ -222,7 +227,7 @@ impl TrackBox {
     pub fn new(is_video: bool) -> Self {
         TrackBox {
             tkhd_box: TrackHeaderBox::new(is_video),
-            edts_box: EditBox::default(),
+            //     edts_box: EditBox::default(),
             mdia_box: MediaBox::new(is_video),
         }
     }
@@ -233,13 +238,13 @@ impl Mp4Box for TrackBox {
     fn box_payload_size(&self) -> Result<u32> {
         let mut size = 0;
         size += box_size!(self.tkhd_box);
-        size += box_size!(self.edts_box);
+        // size += box_size!(self.edts_box);
         size += box_size!(self.mdia_box);
         Ok(size)
     }
     fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
         write_box!(writer, self.tkhd_box);
-        write_box!(writer, self.edts_box);
+        // write_box!(writer, self.edts_box);
         write_box!(writer, self.mdia_box);
         Ok(())
     }
@@ -744,10 +749,11 @@ pub enum SampleEntry {
 }
 impl SampleEntry {
     fn box_size(&self) -> Result<u32> {
-        match *self {
+        let res = match *self {
             SampleEntry::Avc(ref x) => track!(x.box_size()),
             SampleEntry::Aac(ref x) => track!(x.box_size()),
-        }
+        };
+        res
     }
     fn write_box<W: Write>(&self, writer: W) -> Result<()> {
         match *self {

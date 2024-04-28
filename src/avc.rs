@@ -1,7 +1,8 @@
 //! AVC (H.264) related constituent elements.
 use crate::io::AvcBitReader;
-use crate::{ErrorKind, Result};
+use crate::{fmp4::Sample, ErrorKind, Result};
 use byteorder::ReadBytesExt;
+use bytes::Bytes;
 use std::io::{Read, Write};
 
 /// AVC decoder configuration record.
@@ -11,17 +12,14 @@ pub struct AvcDecoderConfigurationRecord {
     pub profile_idc: u8,
     pub constraint_set_flag: u8,
     pub level_idc: u8,
-    pub sequence_parameter_set: Vec<u8>,
-    pub picture_parameter_set: Vec<u8>,
+    pub sequence_parameter_set: Bytes,
+    pub picture_parameter_set: Bytes,
 }
+
 impl AvcDecoderConfigurationRecord {
     pub(crate) fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
         write_u8!(writer, 1); // configuration_version
 
-        match self.profile_idc {
-            100 | 110 | 122 | 144 => track_panic!(ErrorKind::Unsupported),
-            _ => {}
-        }
         write_u8!(writer, self.profile_idc);
         write_u8!(writer, self.constraint_set_flag);
         write_u8!(writer, self.level_idc);
@@ -30,7 +28,6 @@ impl AvcDecoderConfigurationRecord {
         write_u8!(writer, 0b1110_0000 | 0b0000_0001); // reserved and num_of_sequence_parameter_set_ext
         write_u16!(writer, self.sequence_parameter_set.len() as u16);
         write_all!(writer, &self.sequence_parameter_set);
-
         write_u8!(writer, 0b0000_0001); // num_of_picture_parameter_set_ext
         write_u16!(writer, self.picture_parameter_set.len() as u16);
         write_all!(writer, &self.picture_parameter_set);
@@ -39,7 +36,7 @@ impl AvcDecoderConfigurationRecord {
 }
 
 #[derive(Debug)]
-pub(crate) struct SpsSummary {
+pub struct SpsSummary {
     pub profile_idc: u8,
     pub constraint_set_flag: u8,
     pub level_idc: u8,
@@ -241,5 +238,31 @@ impl<'a> Iterator for ByteStreamFormatNalUnits<'a> {
             self.bytes = &self.bytes[next_start..];
             Some(nal_unit)
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct AvcStream {
+    pub configuration: AvcDecoderConfigurationRecord,
+    pub samples: Vec<Sample>,
+    pub data: Vec<u8>,
+}
+impl AvcStream {
+    fn duration(&self) -> Result<u32> {
+        let mut duration: u32 = 0;
+        for sample in &self.samples {
+            let sample_duration = track_assert_some!(sample.duration, ErrorKind::InvalidInput);
+            duration = track_assert_some!(
+                duration.checked_add(sample_duration),
+                ErrorKind::InvalidInput
+            );
+        }
+        Ok(duration)
+    }
+    fn start_time(&self) -> i32 {
+        self.samples
+            .first()
+            .and_then(|s| s.composition_time_offset)
+            .unwrap_or(0)
     }
 }

@@ -1,7 +1,16 @@
+use crate::aac::{self, AdtsHeader};
+use crate::avc::AvcDecoderConfigurationRecord;
 use crate::fmp4::{Mp4Box, AUDIO_TRACK_ID, VIDEO_TRACK_ID};
 use crate::io::{ByteCounter, WriteTo};
 use crate::{ErrorKind, Result};
+use bytes::Bytes;
 use std::io::Write;
+
+#[derive(Debug)]
+struct TrackData {
+    offset: u64,
+    traf_index: usize,
+}
 
 /// [ISO BMFF Byte Stream Format: 4. Media Segments][media_segment]
 ///
@@ -10,20 +19,55 @@ use std::io::Write;
 #[derive(Debug, Default)]
 pub struct MediaSegment {
     pub moof_box: MovieFragmentBox,
-    pub mdat_boxes: Vec<MediaDataBox>,
+    pub mdat_box: MediaDataBox,
+    pub sequence_number: u32,
+    tracks: Vec<TrackData>,
 }
+impl MediaSegment {
+    pub fn new(sequence_number: u32) -> Self {
+        MediaSegment {
+            moof_box: MovieFragmentBox::new(sequence_number),
+            mdat_box: MediaDataBox { data: Vec::new() },
+            tracks: Vec::new(),
+            sequence_number,
+        }
+    }
+
+    pub fn add_track_data(&mut self, traf_index: usize, data: &Vec<u8>) {
+        let offset = self.mdat_box.data.len() as u64;
+        self.tracks.push(TrackData { offset, traf_index });
+        self.mdat_box.data.extend_from_slice(&data);
+    }
+
+    pub fn update_offsets(&mut self) {
+        let moof_size = {
+            let mut counter = ByteCounter::with_sink();
+            self.moof_box.write_box(&mut counter).unwrap();
+            counter.count()
+        };
+
+        let mut offset = moof_size + 8;
+
+        for track_data in &mut self.tracks {
+            self.moof_box.traf_boxes[track_data.traf_index]
+                .trun_box
+                .data_offset = Some((offset + track_data.offset) as i32);
+        }
+    }
+}
+
 impl WriteTo for MediaSegment {
     fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
-        track_assert!(!self.mdat_boxes.is_empty(), ErrorKind::InvalidInput);
         write_box!(writer, self.moof_box);
-        write_boxes!(writer, &self.mdat_boxes);
+        write_box!(writer, self.mdat_box);
+
         Ok(())
     }
 }
 
 /// 8.1.1 Media Data Box (ISO/IEC 14496-12).
 #[allow(missing_docs)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MediaDataBox {
     pub data: Vec<u8>,
 }
@@ -45,7 +89,18 @@ impl Mp4Box for MediaDataBox {
 pub struct MovieFragmentBox {
     pub mfhd_box: MovieFragmentHeaderBox,
     pub traf_boxes: Vec<TrackFragmentBox>,
+    pub sequence_number: u32,
 }
+impl MovieFragmentBox {
+    pub fn new(sequence_number: u32) -> Self {
+        MovieFragmentBox {
+            mfhd_box: MovieFragmentHeaderBox::new(sequence_number),
+            traf_boxes: Vec::new(),
+            sequence_number, // Initialize the sequence_number field
+        }
+    }
+}
+
 impl Mp4Box for MovieFragmentBox {
     const BOX_TYPE: [u8; 4] = *b"moof";
 
@@ -68,6 +123,13 @@ impl Mp4Box for MovieFragmentBox {
 pub struct MovieFragmentHeaderBox {
     /// The number associated with this fragment.
     pub sequence_number: u32,
+}
+impl MovieFragmentHeaderBox {
+    pub fn new(sequence_number: u32) -> Self {
+        MovieFragmentHeaderBox {
+            sequence_number, // Initialize the sequence_number field
+        }
+    }
 }
 impl Mp4Box for MovieFragmentHeaderBox {
     const BOX_TYPE: [u8; 4] = *b"mfhd";
@@ -110,7 +172,9 @@ impl TrackFragmentBox {
         };
         TrackFragmentBox {
             tfhd_box: TrackFragmentHeaderBox::new(track_id),
-            tfdt_box: TrackFragmentBaseMediaDecodeTimeBox,
+            tfdt_box: TrackFragmentBaseMediaDecodeTimeBox {
+                base_media_decode_time: 0,
+            },
             trun_box: TrackRunBox::default(),
         }
     }
@@ -200,7 +264,10 @@ impl Mp4Box for TrackFragmentHeaderBox {
 
 /// 8.8.12 Track fragment decode time (ISO/IEC 14496-12).
 #[derive(Debug)]
-pub struct TrackFragmentBaseMediaDecodeTimeBox;
+pub struct TrackFragmentBaseMediaDecodeTimeBox {
+    pub base_media_decode_time: u32,
+}
+
 impl Mp4Box for TrackFragmentBaseMediaDecodeTimeBox {
     const BOX_TYPE: [u8; 4] = *b"tfdt";
 
@@ -211,7 +278,7 @@ impl Mp4Box for TrackFragmentBaseMediaDecodeTimeBox {
         Ok(4)
     }
     fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
-        write_u32!(writer, 0); // base_media_decode_time
+        write_u32!(writer, self.base_media_decode_time);
         Ok(())
     }
 }

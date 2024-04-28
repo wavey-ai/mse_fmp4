@@ -9,7 +9,6 @@
 //! [MSE]: http://www.w3.org/TR/media-source/
 #![warn(missing_docs)]
 extern crate byteorder;
-extern crate mpeg2ts;
 #[macro_use]
 extern crate trackable;
 
@@ -115,7 +114,6 @@ pub mod aac;
 pub mod avc;
 pub mod fmp4;
 pub mod io;
-pub mod mpeg2_ts;
 
 mod error;
 

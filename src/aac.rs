@@ -1,12 +1,12 @@
 //! AAC related constituent elements.
-use crate::{ErrorKind, Result};
+use crate::{fmp4::Sample, ErrorKind, Result};
 use byteorder::{BigEndian, ReadBytesExt};
 use std::io::Read;
 
-pub(crate) const SAMPLES_IN_FRAME: usize = 1024;
+pub const SAMPLES_IN_FRAME: usize = 1024;
 
 #[derive(Debug, Clone)]
-pub(crate) struct AdtsHeader {
+pub struct AdtsHeader {
     pub profile: AacProfile,
     pub sampling_frequency: SamplingFrequency,
     pub private: bool,
@@ -68,7 +68,7 @@ impl AdtsHeader {
         track_assert_eq!(raw_data_blocks_minus_1, 0, ErrorKind::Unsupported);
         if !crc_protection_absent {
             // 16bits
-            track_panic!(ErrorKind::Unsupported);
+            // track_panic!(ErrorKind::Unsupported);
         }
 
         Ok(AdtsHeader {
@@ -118,7 +118,7 @@ pub enum SamplingFrequency {
     Hz7350 = 12,
 }
 impl SamplingFrequency {
-    pub(crate) fn as_u32(&self) -> u32 {
+    pub fn as_u32(&self) -> u32 {
         match *self {
             SamplingFrequency::Hz96000 => 96_000,
             SamplingFrequency::Hz88200 => 88_200,
@@ -160,6 +160,25 @@ impl SamplingFrequency {
             _ => track_panic!(ErrorKind::InvalidInput, "Unreachable"),
         })
     }
+
+    pub fn from_frequency(freq: u32) -> Result<Self> {
+        match freq {
+            96_000 => Ok(SamplingFrequency::Hz96000),
+            88_200 => Ok(SamplingFrequency::Hz88200),
+            64_000 => Ok(SamplingFrequency::Hz64000),
+            48_000 => Ok(SamplingFrequency::Hz48000),
+            44_100 => Ok(SamplingFrequency::Hz44100),
+            32_000 => Ok(SamplingFrequency::Hz32000),
+            24_000 => Ok(SamplingFrequency::Hz24000),
+            22_050 => Ok(SamplingFrequency::Hz22050),
+            16_000 => Ok(SamplingFrequency::Hz16000),
+            12_000 => Ok(SamplingFrequency::Hz12000),
+            11_025 => Ok(SamplingFrequency::Hz11025),
+            8_000 => Ok(SamplingFrequency::Hz8000),
+            7_350 => Ok(SamplingFrequency::Hz7350),
+            _ => track_panic!(ErrorKind::InvalidInput, "Bad frequency"),
+        }
+    }
 }
 
 /// Channel configuration.
@@ -191,7 +210,7 @@ pub enum ChannelConfiguration {
     EightChannels = 7,
 }
 impl ChannelConfiguration {
-    fn from_u8(n: u8) -> Result<Self> {
+    pub fn from_u8(n: u8) -> Result<Self> {
         Ok(match n {
             0 => ChannelConfiguration::SentViaInbandPce,
             1 => ChannelConfiguration::OneChannel,
@@ -203,5 +222,21 @@ impl ChannelConfiguration {
             7 => ChannelConfiguration::EightChannels,
             _ => track_panic!(ErrorKind::InvalidInput, "Unreachable"),
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct AacStream {
+    pub adts_header: AdtsHeader,
+    pub samples: Vec<Sample>,
+    pub data: Vec<u8>,
+}
+impl AacStream {
+    fn duration(&self) -> Result<u32> {
+        let duration = track_assert_some!(
+            (SAMPLES_IN_FRAME as u32).checked_mul(self.samples.len() as u32),
+            ErrorKind::InvalidInput
+        );
+        Ok(duration)
     }
 }

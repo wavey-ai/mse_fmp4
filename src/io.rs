@@ -10,7 +10,7 @@ pub trait WriteTo {
 }
 
 #[derive(Debug)]
-pub(crate) struct ByteCounter<T> {
+pub struct ByteCounter<T> {
     inner: T,
     count: u64,
 }
