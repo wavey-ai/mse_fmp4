@@ -49,9 +49,17 @@ impl MediaSegment {
         let mut offset = moof_size + 8;
 
         for track_data in &mut self.tracks {
-            self.moof_box.traf_boxes[track_data.traf_index]
-                .trun_box
-                .data_offset = Some((offset + track_data.offset) as i32);
+            if track_data.traf_index < self.moof_box.traf_boxes.len() {
+                self.moof_box.traf_boxes[track_data.traf_index]
+                    .trun_box
+                    .data_offset = Some((offset + track_data.offset) as i32);
+            } else {
+                dbg!(
+                    "track_data.traf_index {} but self.moof_box.traf_boxes.len() {}",
+                    track_data.traf_index,
+                    self.moof_box.traf_boxes.len()
+                );
+            }
         }
     }
 }
