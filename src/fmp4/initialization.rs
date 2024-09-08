@@ -1,5 +1,6 @@
 use crate::aac::{AacProfile, ChannelConfiguration, SamplingFrequency};
 use crate::avc::AvcDecoderConfigurationRecord;
+use crate::flac::{FlacMetadataBlock, FlacStreamConfiguration};
 use crate::fmp4::{Mp4Box, AUDIO_TRACK_ID, VIDEO_TRACK_ID};
 use crate::io::{ByteCounter, WriteTo};
 use crate::{ErrorKind, Result};
@@ -740,25 +741,78 @@ impl Mp4Box for SampleToChunkBox {
     }
 }
 
+#[allow(missing_docs)]
+#[derive(Debug)]
+pub struct FlacSampleEntry {
+    pub dfla_box: FlacStreamConfiguration,
+    pub flac_box: Vec<FlacMetadataBlock>,
+}
+
+impl FlacSampleEntry {
+    fn write_box_payload_without_flac<W: Write>(&self, mut writer: W) -> Result<()> {
+        write_zeroes!(writer, 6);
+        write_u16!(writer, 1); // data_reference_index
+
+        let channels = self.dfla_box.channels as u16;
+        let sample_rate = self.dfla_box.sample_rate;
+        write_zeroes!(writer, 8);
+
+        write_u16!(writer, channels);
+        write_u16!(writer, self.dfla_box.bits_per_sample as u16);
+        write_zeroes!(writer, 4);
+        write_u16!(writer, sample_rate as u16);
+        write_zeroes!(writer, 2);
+        Ok(())
+    }
+}
+
+impl Mp4Box for FlacSampleEntry {
+    const BOX_TYPE: [u8; 4] = *b"fLaC";
+
+    fn box_payload_size(&self) -> Result<u32> {
+        let mut size = 0;
+        size += track!(ByteCounter::calculate(
+            |w| self.write_box_payload_without_flac(w)
+        ))? as u32;
+        size += box_size!(self.dfla_box);
+        for metadata_block in &self.flac_box {
+            size += box_size!(metadata_block);
+        }
+        Ok(size)
+    }
+
+    fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
+        track!(self.write_box_payload_without_flac(&mut writer))?;
+        write_box!(writer, self.dfla_box);
+        for metadata_block in &self.flac_box {
+            write_box!(writer, metadata_block);
+        }
+        Ok(())
+    }
+}
+
 /// 8.5.2.2 Sample Entry (ISO/IEC 14496-12).
 #[allow(missing_docs)]
 #[derive(Debug)]
 pub enum SampleEntry {
     Avc(AvcSampleEntry),
     Aac(AacSampleEntry),
+    Flac(FlacSampleEntry),
 }
 impl SampleEntry {
     fn box_size(&self) -> Result<u32> {
-        let res = match *self {
-            SampleEntry::Avc(ref x) => track!(x.box_size()),
-            SampleEntry::Aac(ref x) => track!(x.box_size()),
-        };
-        res
+        match self {
+            SampleEntry::Avc(x) => track!(x.box_size()),
+            SampleEntry::Aac(x) => track!(x.box_size()),
+            SampleEntry::Flac(x) => track!(x.box_size()),
+        }
     }
+
     fn write_box<W: Write>(&self, writer: W) -> Result<()> {
-        match *self {
-            SampleEntry::Avc(ref x) => track!(x.write_box(writer)),
-            SampleEntry::Aac(ref x) => track!(x.write_box(writer)),
+        match self {
+            SampleEntry::Avc(x) => track!(x.write_box(writer)),
+            SampleEntry::Aac(x) => track!(x.write_box(writer)),
+            SampleEntry::Flac(x) => track!(x.write_box(writer)),
         }
     }
 }
