@@ -1,6 +1,6 @@
 use crate::aac::{AacProfile, ChannelConfiguration, SamplingFrequency};
 use crate::avc::AvcDecoderConfigurationRecord;
-use crate::flac::{FlacMetadataBlock, FlacStreamConfiguration};
+use crate::flac::{FLACMetadataBlock, FLACSpecificBox};
 use crate::fmp4::{Mp4Box, AUDIO_TRACK_ID, VIDEO_TRACK_ID};
 use crate::io::{ByteCounter, WriteTo};
 use crate::{ErrorKind, Result};
@@ -139,13 +139,9 @@ pub struct TrackExtendsBox {
 }
 impl TrackExtendsBox {
     /// Makes a new `TrackExtendsBox` instance.
-    pub fn new(is_video: bool) -> Self {
+    pub fn new(track_id: u32) -> Self {
         TrackExtendsBox {
-            track_id: if is_video {
-                VIDEO_TRACK_ID
-            } else {
-                AUDIO_TRACK_ID
-            },
+            track_id,
             default_sample_description_index: 1,
             default_sample_duration: 0,
             default_sample_size: 0,
@@ -182,8 +178,8 @@ pub struct MovieHeaderBox {
 impl Default for MovieHeaderBox {
     fn default() -> Self {
         MovieHeaderBox {
-            timescale: 1,
-            duration: 1,
+            timescale: 1000,
+            duration: 0,
         }
     }
 }
@@ -225,9 +221,9 @@ pub struct TrackBox {
 }
 impl TrackBox {
     /// Makes a new `TrackBox` instance.
-    pub fn new(is_video: bool) -> Self {
+    pub fn new(track_id: u32, is_video: bool) -> Self {
         TrackBox {
-            tkhd_box: TrackHeaderBox::new(is_video),
+            tkhd_box: TrackHeaderBox::new(track_id),
             //     edts_box: EditBox::default(),
             mdia_box: MediaBox::new(is_video),
         }
@@ -262,15 +258,11 @@ pub struct TrackHeaderBox {
     pub height: u32, // fixed point 16.16
 }
 impl TrackHeaderBox {
-    fn new(is_video: bool) -> Self {
+    fn new(track_id: u32) -> Self {
         TrackHeaderBox {
-            track_id: if is_video {
-                VIDEO_TRACK_ID
-            } else {
-                AUDIO_TRACK_ID
-            },
+            track_id,
             duration: 1,
-            volume: if is_video { 0 } else { 256 },
+            volume: 256,
             width: 0,
             height: 0,
         }
@@ -399,7 +391,7 @@ pub struct MediaHeaderBox {
 impl Default for MediaHeaderBox {
     fn default() -> Self {
         MediaHeaderBox {
-            timescale: 0,
+            timescale: 1000,
             duration: 1,
         }
     }
@@ -743,50 +735,43 @@ impl Mp4Box for SampleToChunkBox {
 
 #[allow(missing_docs)]
 #[derive(Debug)]
-pub struct FlacSampleEntry {
-    pub dfla_box: FlacStreamConfiguration,
-    pub flac_box: Vec<FlacMetadataBlock>,
+pub struct FLACSampleEntry {
+    pub dfla_box: FLACSpecificBox,
+    pub channel_count: u16,
+    pub sample_size: u16,
+    pub sample_rate: u32,
 }
 
-impl FlacSampleEntry {
-    fn write_box_payload_without_flac<W: Write>(&self, mut writer: W) -> Result<()> {
+impl FLACSampleEntry {
+    fn write_box_payload_without_dfla<W: Write>(&self, mut writer: W) -> Result<()> {
         write_zeroes!(writer, 6);
         write_u16!(writer, 1); // data_reference_index
-
-        let channels = self.dfla_box.channels as u16;
-        let sample_rate = self.dfla_box.sample_rate;
         write_zeroes!(writer, 8);
-
-        write_u16!(writer, channels);
-        write_u16!(writer, self.dfla_box.bits_per_sample as u16);
+        track_assert!(self.channel_count > 0, ErrorKind::InvalidInput);
+        track_assert!(self.sample_rate <= 0xFFFF_0000, ErrorKind::InvalidInput);
+        write_u16!(writer, self.channel_count);
+        write_u16!(writer, self.sample_size);
         write_zeroes!(writer, 4);
-        write_u16!(writer, sample_rate as u16);
-        write_zeroes!(writer, 2);
+        write_u32!(writer, self.sample_rate << 16);
         Ok(())
     }
 }
 
-impl Mp4Box for FlacSampleEntry {
+impl Mp4Box for FLACSampleEntry {
     const BOX_TYPE: [u8; 4] = *b"fLaC";
 
     fn box_payload_size(&self) -> Result<u32> {
         let mut size = 0;
         size += track!(ByteCounter::calculate(
-            |w| self.write_box_payload_without_flac(w)
+            |w| self.write_box_payload_without_dfla(w)
         ))? as u32;
         size += box_size!(self.dfla_box);
-        for metadata_block in &self.flac_box {
-            size += box_size!(metadata_block);
-        }
         Ok(size)
     }
 
     fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
-        track!(self.write_box_payload_without_flac(&mut writer))?;
+        track!(self.write_box_payload_without_dfla(&mut writer))?;
         write_box!(writer, self.dfla_box);
-        for metadata_block in &self.flac_box {
-            write_box!(writer, metadata_block);
-        }
         Ok(())
     }
 }
@@ -797,7 +782,7 @@ impl Mp4Box for FlacSampleEntry {
 pub enum SampleEntry {
     Avc(AvcSampleEntry),
     Aac(AacSampleEntry),
-    Flac(FlacSampleEntry),
+    Flac(FLACSampleEntry),
 }
 impl SampleEntry {
     fn box_size(&self) -> Result<u32> {

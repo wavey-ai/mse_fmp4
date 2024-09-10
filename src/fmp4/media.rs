@@ -1,6 +1,5 @@
 use crate::aac::{self, AdtsHeader};
 use crate::avc::AvcDecoderConfigurationRecord;
-use crate::flac::{FlacMetadataBlock, FlacStreamConfiguration};
 use crate::fmp4::{Mp4Box, AUDIO_TRACK_ID, VIDEO_TRACK_ID};
 use crate::io::{ByteCounter, WriteTo};
 use crate::{ErrorKind, Result};
@@ -69,23 +68,6 @@ impl MediaSegment {
                 );
             }
         }
-    }
-    pub fn add_flac_track_data(
-        &mut self,
-        flac_data: &[u8],
-        flac_config: FlacStreamConfiguration,
-        flac_metadata: Vec<FlacMetadataBlock>,
-    ) {
-        let traf_index = self.moof_box.traf_boxes.len();
-        self.add_track_data(traf_index, &flac_data.to_vec());
-
-        let mut traf = TrackFragmentBox::new(TrackType::Flac);
-        traf.trun_box.samples.push(Sample {
-            size: Some(flac_data.len() as u32),
-            ..Default::default()
-        });
-
-        self.moof_box.traf_boxes.push(traf);
     }
 }
 
@@ -197,12 +179,7 @@ pub struct TrackFragmentBox {
 }
 impl TrackFragmentBox {
     /// Makes a new `TrackFragmentBox` instance.
-    pub fn new(track_type: TrackType) -> Self {
-        let track_id = match track_type {
-            TrackType::Video => VIDEO_TRACK_ID,
-            TrackType::Audio => AUDIO_TRACK_ID,
-            TrackType::Flac => AUDIO_TRACK_ID, // FLAC uses the audio track ID
-        };
+    pub fn new(track_id: u32) -> Self {
         TrackFragmentBox {
             tfhd_box: TrackFragmentHeaderBox::new(track_id),
             tfdt_box: TrackFragmentBaseMediaDecodeTimeBox {

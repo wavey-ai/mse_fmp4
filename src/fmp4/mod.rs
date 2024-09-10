@@ -2,7 +2,7 @@
 pub use self::common::Mp4Box;
 pub use self::initialization::{
     AacSampleEntry, AvcConfigurationBox, AvcSampleEntry, ChunkOffsetBox, DataEntryUrlBox,
-    DataInformationBox, DataReferenceBox, EditBox, EditListBox, FileTypeBox, FlacSampleEntry,
+    DataInformationBox, DataReferenceBox, EditBox, EditListBox, FLACSampleEntry, FileTypeBox,
     HandlerReferenceBox, InitializationSegment, MediaBox, MediaHeaderBox, MediaInformationBox,
     MovieBox, MovieExtendsBox, MovieExtendsHeaderBox, MovieHeaderBox, Mpeg4EsDescriptorBox,
     SampleDescriptionBox, SampleEntry, SampleSizeBox, SampleTableBox, SampleToChunkBox,

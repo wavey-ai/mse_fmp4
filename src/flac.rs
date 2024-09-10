@@ -1,57 +1,47 @@
 use crate::fmp4::Mp4Box;
-use crate::io::WriteTo;
-use crate::Result;
+use crate::{ErrorKind, Result};
 use std::io::Write;
 
 #[derive(Debug, Clone)]
-pub struct FlacStreamConfiguration {
-    pub min_block_size: u16,
-    pub max_block_size: u16,
-    pub min_frame_size: u32,
-    pub max_frame_size: u32,
-    pub sample_rate: u32,
-    pub channels: u8,
-    pub bits_per_sample: u8,
+pub struct FLACSpecificBox {
+    pub metadata_blocks: Vec<FLACMetadataBlock>,
 }
 
-impl Mp4Box for FlacStreamConfiguration {
+impl Mp4Box for FLACSpecificBox {
     const BOX_TYPE: [u8; 4] = *b"dfLa";
 
     fn box_payload_size(&self) -> Result<u32> {
-        Ok(20) // Size of all fields
+        Ok(4u32
+            + self
+                .metadata_blocks
+                .iter()
+                .map(|block| block.total_size())
+                .sum::<u32>())
     }
 
     fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
-        write_u16!(writer, self.min_block_size);
-        write_u16!(writer, self.max_block_size);
-        write_u32!(writer, self.min_frame_size);
-        write_u32!(writer, self.max_frame_size);
-        write_u32!(writer, self.sample_rate);
-        write_u8!(writer, self.channels);
-        write_u8!(writer, self.bits_per_sample);
+        write_u32!(writer, 0);
+        for block in &self.metadata_blocks {
+            block.write_to(&mut writer)?;
+        }
         Ok(())
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct FlacMetadataBlock {
-    pub last_metadata_block_flag: bool,
-    pub block_type: u8,
-    pub length: u32,
+pub struct FLACMetadataBlock {
     pub data: Vec<u8>,
 }
 
-impl Mp4Box for FlacMetadataBlock {
-    const BOX_TYPE: [u8; 4] = *b"fLaC";
-
-    fn box_payload_size(&self) -> Result<u32> {
-        Ok(5 + self.data.len() as u32) // 1 byte for flags, 4 for length, plus data
+impl FLACMetadataBlock {
+    fn total_size(&self) -> u32 {
+        4 + self.data.len() as u32 // 4 bytes for header, plus data
     }
 
-    fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
-        let flag_byte = ((self.last_metadata_block_flag as u8) << 7) | self.block_type;
-        write_u8!(writer, flag_byte);
-        write_u32!(writer, self.length);
+    fn write_to<W: Write>(&self, mut writer: W) -> Result<()> {
+        let header: u32 =
+            ((true as u32) << 31) | ((0 as u32) << 24) | (self.data.len() as u32 & 0x00FFFFFF);
+        write_u32!(writer, header);
         write_all!(writer, &self.data);
         Ok(())
     }
