@@ -39,6 +39,7 @@ impl AdtsHeader {
             1 => AacProfile::Lc,
             2 => AacProfile::Ssr,
             3 => AacProfile::Ltp,
+            39 => AacProfile::Eld,
             _ => unreachable!(),
         };
         let sampling_frequency = track!(SamplingFrequency::from_index((n >> 2) & 0b1111))?;
@@ -97,6 +98,8 @@ pub enum AacProfile {
 
     /// AAC LTP (Long Term Prediction).
     Ltp = 3,
+
+    Eld = 39,
 }
 
 /// Sampling frequency.
