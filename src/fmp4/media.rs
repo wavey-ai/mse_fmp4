@@ -46,6 +46,16 @@ impl MediaSegment {
         self.mdat_box.data.extend_from_slice(&data);
     }
 
+    pub fn add_owned_track_data(&mut self, traf_index: usize, mut data: Vec<u8>) {
+        let offset = self.mdat_box.data.len() as u64;
+        self.tracks.push(TrackData { offset, traf_index });
+        if self.mdat_box.data.is_empty() {
+            self.mdat_box.data = data;
+        } else {
+            self.mdat_box.data.append(&mut data);
+        }
+    }
+
     pub fn update_offsets(&mut self) {
         let moof_size = {
             let mut counter = ByteCounter::with_sink();
@@ -275,20 +285,32 @@ impl Mp4Box for TrackFragmentHeaderBox {
 /// 8.8.12 Track fragment decode time (ISO/IEC 14496-12).
 #[derive(Debug)]
 pub struct TrackFragmentBaseMediaDecodeTimeBox {
-    pub base_media_decode_time: u32,
+    pub base_media_decode_time: u64,
 }
 
 impl Mp4Box for TrackFragmentBaseMediaDecodeTimeBox {
     const BOX_TYPE: [u8; 4] = *b"tfdt";
 
     fn box_version(&self) -> Option<u8> {
-        Some(0)
+        if self.base_media_decode_time > u64::from(u32::MAX) {
+            Some(1)
+        } else {
+            Some(0)
+        }
     }
     fn box_payload_size(&self) -> Result<u32> {
-        Ok(4)
+        if self.base_media_decode_time > u64::from(u32::MAX) {
+            Ok(8)
+        } else {
+            Ok(4)
+        }
     }
     fn write_box_payload<W: Write>(&self, mut writer: W) -> Result<()> {
-        write_u32!(writer, self.base_media_decode_time);
+        if self.base_media_decode_time > u64::from(u32::MAX) {
+            write_u64!(writer, self.base_media_decode_time);
+        } else {
+            write_u32!(writer, self.base_media_decode_time as u32);
+        }
         Ok(())
     }
 }
@@ -398,5 +420,50 @@ impl SampleFlags {
             | (u32::from(self.sample_padding_value) << 17)
             | ((self.sample_is_non_sync_sample as u32) << 16)
             | u32::from(self.sample_degradation_priority)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::convert::TryInto;
+
+    fn read_u32(bytes: &[u8]) -> u32 {
+        u32::from_be_bytes(bytes.try_into().unwrap())
+    }
+
+    fn read_u64(bytes: &[u8]) -> u64 {
+        u64::from_be_bytes(bytes.try_into().unwrap())
+    }
+
+    #[test]
+    fn tfdt_writes_version_zero_for_32_bit_decode_time() {
+        let tfdt = TrackFragmentBaseMediaDecodeTimeBox {
+            base_media_decode_time: 123_456,
+        };
+        let mut out = Vec::new();
+
+        tfdt.write_box(&mut out).unwrap();
+
+        assert_eq!(read_u32(&out[0..4]), 16);
+        assert_eq!(&out[4..8], b"tfdt");
+        assert_eq!(out[8], 0);
+        assert_eq!(read_u32(&out[12..16]), 123_456);
+    }
+
+    #[test]
+    fn tfdt_writes_version_one_for_64_bit_decode_time() {
+        let decode_time = u64::from(u32::MAX) + 1;
+        let tfdt = TrackFragmentBaseMediaDecodeTimeBox {
+            base_media_decode_time: decode_time,
+        };
+        let mut out = Vec::new();
+
+        tfdt.write_box(&mut out).unwrap();
+
+        assert_eq!(read_u32(&out[0..4]), 20);
+        assert_eq!(&out[4..8], b"tfdt");
+        assert_eq!(out[8], 1);
+        assert_eq!(read_u64(&out[12..20]), decode_time);
     }
 }
